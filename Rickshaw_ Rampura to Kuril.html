@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Rickshaw: Rampura to Kuril</title>
+<style>
+:root{--bg:#f1ede3;--card:#fff;--ink:#1f2328;--mute:#6b7280;--acc:#d6452d;--ok:#2f9e6b;--bad:#d64545;--line:#d9d4c7;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#16181d;--card:#22252c;--ink:#eceef2;--mute:#9aa1ad;--line:#33373f}}
+:root[data-theme="dark"]{--bg:#16181d;--card:#22252c;--ink:#eceef2;--mute:#9aa1ad;--line:#33373f}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overflow:hidden}
+#app{height:100%;display:flex;flex-direction:column;align-items:center;padding:8px;gap:6px}
+#hud{width:100%;max-width:420px;display:flex;flex-direction:column;gap:4px;font-size:13px}
+.row{display:flex;justify-content:space-between;gap:8px}
+.bar{height:10px;background:var(--line);border-radius:6px;overflow:hidden}
+.bar i{display:block;height:100%;width:100%;background:var(--ok);transition:background .2s}
+#route{position:relative;height:10px;background:var(--line);border-radius:6px}
+#route i{position:absolute;left:0;top:0;height:100%;background:var(--acc);border-radius:6px;width:0}
+#stops{display:flex;justify-content:space-between;font-size:11px;color:var(--mute)}
+#wrap{position:relative;flex:1;min-height:0;width:100%;max-width:420px;display:flex;justify-content:center}
+canvas{height:100%;max-width:100%;aspect-ratio:360/600;border-radius:12px;touch-action:none;background:#555}
+.overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:16px}
+.overlay.hide{display:none}
+#pedals{position:absolute;left:0;right:0;bottom:8px;display:flex;justify-content:center;gap:12px;pointer-events:none}
+#pedals button{pointer-events:auto;touch-action:none;user-select:none;-webkit-user-select:none;opacity:.88;padding:14px 18px}
+#pedals #bslow{background:#2a9d8f}
+.modal{background:var(--card);border-radius:16px;padding:22px;max-width:340px;text-align:center;box-shadow:0 6px 30px rgba(0,0,0,.35)}
+.modal h2{margin:0 0 6px;font-size:22px}
+.modal p{color:var(--mute);margin:6px 0 14px;font-size:14px;line-height:1.4}
+button{font:inherit;border:0;border-radius:10px;padding:12px 18px;background:var(--acc);color:#fff;font-weight:700;cursor:pointer}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="hud">
+    <div class="row"><span>🛺 Passenger comfort</span><span>Fare: ৳<b id="fare">0</b> · Best: ৳<b id="best">0</b></span></div>
+    <div class="bar"><i id="comfort"></i></div>
+    <div class="row"><span>⚡ Stamina</span><span id="mode">Normal</span></div>
+    <div class="bar"><i id="stam" style="background:#3b5bdb"></i></div>
+    <div id="route"><i id="prog"></i></div>
+    <div id="stops"><span>Rampura</span><span>Badda</span><span>Notun Bazar</span><span>Kuril</span></div>
+  </div>
+  <div id="wrap">
+    <canvas id="c" width="360" height="600"></canvas>
+    <div id="pedals"><button id="bslow">🐢 Slow</button><button id="brun">🏃 Run</button></div>
+    <div class="overlay" id="ov">
+      <div class="modal">
+        <h2 id="ttl">Rampura → Kuril</h2>
+        <p id="msg">You’re a rickshaw puller. The road is full of potholes and puddles. Steer with ← → (or touch the left/right side of the screen). Hold ↑ / W to run (uses stamina, bumps hurt more) and ↓ / S to slow down (safer, but you earn less). On phones use the 🐢 / 🏃 buttons. Traffic flows both ways: stay in your left lane and dodge oncoming buses, CNGs and rickshaws. Hawkers with customers crowd the footpath and sometimes spill onto the road, rickshaws are everywhere, and some stretches are jammed. Avoid the deep pits with orange cones, they swallow the whole rickshaw!</p>
+        <button id="go">Start pulling</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  var cv=document.getElementById("c"),ctx=cv.getContext("2d"),W=360,H=600;
+  var RL=44,RR=316,PY=470,TRIP=14000;
+  var JAMS=[[.16,.27],[.47,.58],[.77,.87]];
+  function inJam(d){var f=d/TRIP;for(var i=0;i<JAMS.length;i++)if(f>JAMS[i][0]&&f<JAMS[i][1])return true;return false}
+  var BC=["#b5654a","#cf9a4a","#6c7fa6","#a85c7e","#7b9e6b"],UC=["#e63946","#f4a261","#2a9d8f","#e9c46a","#8338ec"];
+  function person(px,py,c){ctx.fillStyle=c;ctx.beginPath();ctx.ellipse(px,py,6,3.5,0,0,7);ctx.fill();ctx.fillStyle="#f0c8a0";ctx.beginPath();ctx.arc(px,py,3.6,0,7);ctx.fill()}
+  function rick(cx,cy,col,dir){
+    ctx.save();ctx.translate(cx,cy);ctx.scale(.8,.8*dir);
+    ctx.fillStyle="#1b1b1b";ctx.fillRect(-20,14,6,26);ctx.fillRect(14,14,6,26);ctx.fillRect(-3,-42,6,16);
+    ctx.fillStyle=col;ctx.fillRect(-15,6,30,34);
+    ctx.fillStyle="#f1c232";ctx.fillRect(-15,14,30,5);ctx.fillRect(-15,26,30,5);
+    ctx.fillStyle="#3b5bdb";ctx.fillRect(-9,0,18,10);
+    ctx.fillStyle="#f0c8a0";ctx.beginPath();ctx.arc(0,-8,8,0,7);ctx.fill();
+    ctx.fillStyle="#222";ctx.beginPath();ctx.arc(0,-10,5,Math.PI,0);ctx.fill();
+    ctx.fillStyle="#2d6a4f";ctx.fillRect(-9,-4,18,8);
+    ctx.fillStyle="#7c3aed";ctx.fillRect(-7,14,14,10);ctx.fillStyle="#f0c8a0";ctx.beginPath();ctx.arc(0,12,6,0,7);ctx.fill();
+    ctx.restore();
+  }
+  function stall(cx,cy,s,d){ctx.fillStyle="#6b4f2a";ctx.fillRect(cx-9,cy-3,18,14);ctx.fillStyle=UC[(s+2)%5];ctx.fillRect(cx-7,cy,5,5);ctx.fillRect(cx+1,cy,5,5);ctx.fillStyle=UC[s%5];ctx.beginPath();ctx.arc(cx,cy-3,12,0,7);ctx.fill();ctx.fillStyle="rgba(255,255,255,.55)";ctx.fillRect(cx-1,cy-15,2,24);ctx.fillStyle="#f0c8a0";ctx.beginPath();ctx.arc(cx,cy+16,4,0,7);ctx.fill();person(cx+d*13,cy-2,UC[(s+1)%5]);if(s%2===0)person(cx+d*12,cy+10,UC[(s+3)%5])}
+  var STOPS=[["Rampura Bridge",0],["Badda",.33],["Notun Bazar",.66],["Kuril Biswa Road",1]];
+  var elC=document.getElementById("comfort"),elP=document.getElementById("prog"),elF=document.getElementById("fare"),elB=document.getElementById("best");
+  var ov=document.getElementById("ov");
+  var best=0;try{best=parseInt(localStorage.getItem("rk-best")||"0",10)||0}catch(e){}elB.textContent=best;
+  var running=false,last=0,stam=100,hold={},tt=0,mode="norm",fall=null,nextOn=0,nextRk=0,dist,x,vx,speed,comfort,obs,nextSpawn,shake,msgT,msg,keys={},touch=0,slow,bump,fare;
+  var stripe=0;
+
+  function start(){
+    dist=0;x=105;vx=0;speed=240;comfort=100;obs=[];nextSpawn=500;nextOn=700;nextRk=420;fall=null;stam=100;tt=0;hold={};shake=0;msgT=0;msg="";slow=0;bump=0;fare=0;stripe=0;
+    ov.classList.add("hide");running=true;last=performance.now();requestAnimationFrame(loop);
+  }
+  function spawnJam(){
+    var r=Math.random(),k=r<.12?"bus":r<.4?"cng":r<.65?"car":"rick",o={d:nextSpawn,hit:false,k:k,v:25+Math.random()*25};
+    o.w=k==="bus"?48:k==="cng"?40:k==="car"?38:30;o.h=k==="bus"?100:k==="rick"?56:64;o.dmg=k==="bus"?35:22;
+    if(Math.random()<.5){o.t="jam";o.x=RL+26+Math.random()*(W/2-RL-52)}
+    else{o.t="on";o.x=W/2+26+Math.random()*(RR-W/2-52)}
+    obs.push(o);nextSpawn+=105+Math.random()*80;
+  }
+  function spawn(){if(inJam(nextSpawn)){spawnJam();return}
+    var r=Math.random(),lane=RL+30+Math.random()*(RR-RL-60);
+    var o={d:nextSpawn,x:lane,hit:false};
+    if(r<.55){o.t="hole";o.r=14+Math.random()*16}
+    else if(r<.72){o.t="pud";o.r=22+Math.random()*16}else if(r<.8){o.t="pit";o.r=32+Math.random()*6}
+    else if(r<.88){o.t="haw";o.r=20;o.x=Math.random()<.5?RL+16:RR-16}else{o.t="cng";o.w=40;o.h=64;o.v=130+Math.random()*50;o.x=RL+30+Math.random()*(W/2-RL-45)}
+    obs.push(o);
+    var prog=dist/TRIP;
+    nextSpawn+=Math.max(110,300-prog*160)*(.6+Math.random()*.8);
+    if(Math.random()<.45){nextSpawn-=60}
+  }
+  function spawnRk(){
+    if(inJam(nextRk)){nextRk+=150;return}
+    obs.push({t:"rk",k:"rick",d:nextRk,hit:false,v:55+Math.random()*60,x:RL+26+Math.random()*(W/2-RL-52),w:30,h:56,dmg:20});
+    nextRk+=Math.max(150,300-dist/TRIP*100)*(.6+Math.random()*.8);
+  }
+  function spawnOn(){if(inJam(nextOn)){nextOn+=90;return}
+    var r=Math.random(),o={t:"on",d:nextOn,hit:false,x:208+Math.random()*70};
+    if(r<.15){o.k="bus";o.w=48;o.h=100;o.v=150;o.dmg=42}
+    else if(r<.4){o.k="cng";o.w=40;o.h=64;o.v=190;o.dmg=30}
+    else{o.k="rick";o.w=30;o.h=56;o.v=90;o.dmg=24}
+    o.v+=Math.random()*40;
+    obs.push(o);
+    nextOn+=Math.max(260,520-dist/TRIP*220)*(.7+Math.random()*.7);
+  }
+  function say(t){msg=t;msgT=1.1}
+  function hurt(n,t){n=Math.round(n*Math.max(.5,Math.min(1.6,speed/300)));comfort=Math.max(0,comfort-n);shake=.3;say(t)}
+  function end(win,why){
+    running=false;
+    if(win){fare=Math.round(60+comfort*1.4+Math.max(0,90-tt))}
+    if(win&&fare>best){best=fare;elB.textContent=best;try{localStorage.setItem("rk-best",best)}catch(e){}}
+    document.getElementById("ttl").textContent=win?"Kuril reached! 🎉":why==="fall"?"Fell into the pit! 🕳️":"Passenger jumped off!";
+    document.getElementById("msg").textContent=win?
+      "Time "+Math.round(tt)+"s. Fare earned: ৳"+fare+(comfort>70?". Smooth ride, he tipped you!":comfort>30?". Bumpy, but he paid.":". He paid with a glare."):
+      why==="fall"?"The whole rickshaw dropped into the pit, passenger and all. Somebody call the city corporation.":"Too many bumps. He walked off muttering and didn’t pay. Road ≠ rickshaw’s fault.";
+    document.getElementById("go").textContent=win?"Another trip":"Try again";
+    setTimeout(function(){ov.classList.remove("hide")},500);
+  }
+  function loop(now){
+    if(!running)return;
+    var dt=Math.min(.05,(now-last)/1000);last=now;
+    if(fall){fall.t+=dt;speed=0;draw();if(fall.t>1.6){end(false,"fall");return}requestAnimationFrame(loop);return}
+    var dir=(keys.ArrowRight||keys.d?1:0)-(keys.ArrowLeft||keys.a?1:0)+touch;
+    vx+=(dir*260-vx)*Math.min(1,dt*7);
+    x+=vx*dt;
+    if(x<RL+18){x=RL+18;vx=0}if(x>RR-18){x=RR-18;vx=0}
+    var run=(keys.ArrowUp||keys.w||keys.W||hold.run)&&stam>0,brake=!run&&(keys.ArrowDown||keys.s||keys.S||hold.slow);
+    stam=Math.max(0,Math.min(100,stam+(run?-30:brake?22:12)*dt));mode=run?"run":brake?"slow":"norm";
+    var target=(240+(dist/TRIP)*130)*(inJam(dist)?.6:1)*(run?1.6:brake?.45:1);
+    if(slow>0){slow-=dt;target*=.5}
+    speed+=(target-speed)*Math.min(1,dt*2.5);
+    dist+=speed*dt;stripe=(stripe+speed*dt)%60;tt+=dt;
+    if(dist>=TRIP){draw();end(true);return}
+    while(nextSpawn<dist+H+100)spawn();while(nextOn<dist+H+100)spawnOn();while(nextRk<dist+H+100)spawnRk();
+    for(var i=obs.length-1;i>=0;i--){
+      var o=obs[i];
+      if(o.t==="cng")o.d+=o.v*dt;else if(o.t==="on")o.d-=o.v*dt;else if(o.t==="jam")o.d+=o.v*dt;else if(o.t==="rk")o.d+=o.v*dt;
+      var sy=PY-(o.d-dist);
+      if(sy>H+120){obs.splice(i,1);continue}
+      if(o.hit)continue;
+      var dx=Math.abs(x-o.x),dy=Math.abs(PY-sy);
+      if(o.t==="pit"){if(dx<o.r*.6&&dy<o.r*.5){o.hit=true;fall={t:0,ox:o.x}}else if(dx<o.r*1.25&&dy<o.r*.5){o.hit=true;hurt(40,"Almost fell in! 😱")}}else if(o.t==="cng"||o.t==="on"||o.t==="jam"||o.t==="rk"){
+        if(dx<(o.w/2+16)&&dy<(o.h/2+28)){o.hit=true;hurt(o.dmg||28,o.t==="on"?"Head-on! 💥":"CNG crash! 💥");speed*=.5;vx+=(x<o.x?-1:1)*200}
+      }else if(dx<o.r+10&&dy<o.r+26&&dy>-5){
+        o.hit=true;
+        if(o.t==="hole"){hurt(Math.round(o.r*.8),["Aaah! Gorto! 🕳️","Bump!","Ouch!"][Math.floor(Math.random()*3)])}
+        else if(o.t==="haw"){hurt(18,Math.random()<.5?"Hawker’s goods scattered! 🍌":"Watch the customers! 🙈");vx+=(x<o.x?-1:1)*150}else{slow=1.2;say("Dirty water splash 💦")}
+      }
+    }
+    if(shake>0)shake-=dt;if(msgT>0)msgT-=dt;
+    elC.style.width=comfort+"%";elC.style.background=comfort>55?"var(--ok)":comfort>25?"#e0a020":"var(--bad)";
+    elP.style.width=(dist/TRIP*100)+"%";
+    document.getElementById("stam").style.width=stam+"%";document.getElementById("mode").textContent=mode==="run"?"🏃 Running":mode==="slow"?"🐢 Slow":"Normal";
+    elF.textContent=Math.round(60+comfort*1.4+Math.max(0,90-tt));
+    draw();
+    if(comfort<=0){end(false);return}
+    requestAnimationFrame(loop);
+  }
+  function draw(){
+    var sx=shake>0?(Math.random()-.5)*8:0,sy=shake>0?(Math.random()-.5)*8:0;
+    ctx.save();ctx.translate(sx,sy);
+    ctx.fillStyle="#6f8a58";ctx.fillRect(0,0,W,H);
+    ctx.fillStyle="#a39a88";ctx.fillRect(0,0,RL-3,H);ctx.fillRect(RR+3,0,W-RR-3,H);ctx.fillStyle="#d8d2c4";ctx.fillRect(RL-5,0,3,H);ctx.fillRect(RR+2,0,3,H);
+    // shops/buildings side
+    for(var k=-1;k<12;k++){
+      var wi=Math.floor((dist-130)/70)+k,by=PY-(wi*70-dist)-30;
+      ctx.fillStyle=BC[((wi%5)+5)%5];ctx.fillRect(0,by,12,64);ctx.fillStyle=BC[(((wi*3)%5)+5)%5];ctx.fillRect(W-12,by,12,64);
+      var hs=((wi*37+11)%7+7)%7,hr=((wi*53+5)%7+7)%7,sd=((wi%5)+5)%5;if(hs<3)stall(25,by+28,sd,1);if(hr<3)stall(W-25,by+28,sd+1,-1);
+    }
+    ctx.fillStyle="#4a4a4e";ctx.fillRect(RL,0,RR-RL,H);
+    ctx.fillStyle="#f1c232";
+    for(var j=-1;j<12;j++){ctx.fillRect(W/2-4,j*60+stripe-60,3,30);ctx.fillRect(W/2+1,j*60+stripe-60,3,30)}
+    ctx.fillStyle="#f2f2f2";ctx.fillRect(RL,0,3,H);ctx.fillRect(RR-3,0,3,H);
+    // obstacles
+    for(var i=0;i<obs.length;i++){
+      var o=obs[i],y=PY-(o.d-dist);
+      if(y<-90||y>H+90)continue;
+      if(o.t==="hole"){
+        ctx.fillStyle="#2f2a25";ctx.beginPath();ctx.ellipse(o.x,y,o.r*1.15,o.r*.8,0,0,7);ctx.fill();
+        ctx.strokeStyle="#7c6a55";ctx.lineWidth=3;ctx.stroke();
+        ctx.fillStyle="#17130f";ctx.beginPath();ctx.ellipse(o.x,y+2,o.r*.7,o.r*.45,0,0,7);ctx.fill();
+      }else if(o.t==="haw"){
+        var hc=UC[Math.floor(o.x)%5];
+        ctx.fillStyle="#6b4f2a";ctx.fillRect(o.x-11,y-12,22,26);
+        ctx.fillStyle="#f4d03f";ctx.fillRect(o.x-8,y-8,6,6);ctx.fillStyle="#e74c3c";ctx.fillRect(o.x+2,y-8,6,6);
+        ctx.fillStyle="#58d68d";ctx.fillRect(o.x-8,y+2,6,6);ctx.fillStyle="#f39c12";ctx.fillRect(o.x+2,y+2,6,6);
+        ctx.strokeStyle=hc;ctx.lineWidth=4;ctx.beginPath();ctx.arc(o.x,y,17,0,7);ctx.stroke();
+        ctx.fillStyle="#f0c8a0";ctx.beginPath();ctx.arc(o.x,y+21,5,0,7);ctx.fill();
+        var cd=o.x<W/2?1:-1;person(o.x+cd*24,y-3,UC[(Math.floor(o.x)+1)%5]);person(o.x+cd*22,y+10,UC[(Math.floor(o.x)+3)%5]);
+      }else if(o.t==="rk"){rick(o.x,y,UC[Math.floor(o.x)%5],1);
+      }else if(o.t==="jam"){
+        var jw=o.w,jh=o.h;if(o.k==="rick"){rick(o.x,y,UC[Math.floor(o.x)%5],1);continue}
+        ctx.fillStyle=o.k==="bus"?"#2980b9":o.k==="cng"?"#2f8f46":o.k==="car"?"#8e44ad":"#d6452d";
+        ctx.fillRect(o.x-jw/2,y-jh/2,jw,jh);
+        ctx.fillStyle="#1d1d1d";ctx.fillRect(o.x-jw/2+3,y-jh/2+4,jw-6,12);
+        ctx.fillStyle="#ff4040";ctx.fillRect(o.x-jw/2+2,y+jh/2-4,7,4);ctx.fillRect(o.x+jw/2-9,y+jh/2-4,7,4);
+        ctx.fillStyle="#fff";ctx.font="9px sans-serif";ctx.textAlign="center";ctx.fillText(o.k==="bus"?"BUS":o.k==="cng"?"CNG":o.k==="car"?"CAR":"",o.x,y+3);
+      }else if(o.t==="pit"){
+        ctx.fillStyle="#b8860b";ctx.beginPath();ctx.ellipse(o.x,y,o.r*1.5,o.r*1.05,0,0,7);ctx.fill();
+        ctx.fillStyle="#2a2018";ctx.beginPath();ctx.ellipse(o.x,y,o.r*1.3,o.r*.9,0,0,7);ctx.fill();
+        ctx.fillStyle="#000";ctx.beginPath();ctx.ellipse(o.x,y+3,o.r*.9,o.r*.6,0,0,7);ctx.fill();
+        ctx.fillStyle="#ff6b00";ctx.fillRect(o.x-o.r*1.5-6,y-8,8,16);ctx.fillRect(o.x+o.r*1.5-2,y-8,8,16);
+      }else if(o.t==="on"){
+        var w=o.w,h=o.h;if(o.k==="rick"){rick(o.x,y,UC[Math.floor(o.x)%5],-1);continue}
+        ctx.fillStyle=o.k==="bus"?"#c0392b":o.k==="cng"?"#2f8f46":"#3b5bdb";
+        ctx.fillRect(o.x-w/2,y-h/2,w,h);
+        ctx.fillStyle="#f6e58d";ctx.fillRect(o.x-w/2+3,y+h/2-16,w-6,12);
+        ctx.fillStyle="#fff7b0";ctx.fillRect(o.x-w/2+3,y+h/2-3,7,5);ctx.fillRect(o.x+w/2-10,y+h/2-3,7,5);
+        ctx.fillStyle="#fff";ctx.font="9px sans-serif";ctx.textAlign="center";ctx.fillText(o.k==="bus"?"BUS":o.k==="cng"?"CNG":o.k==="car"?"CAR":"RIK",o.x,y-4);
+      }else if(o.t==="pud"){
+        ctx.fillStyle="#6a8da8";ctx.globalAlpha=.85;ctx.beginPath();ctx.ellipse(o.x,y,o.r*1.4,o.r*.8,0,0,7);ctx.fill();
+        ctx.globalAlpha=1;ctx.strokeStyle="#9bbbd0";ctx.lineWidth=2;ctx.stroke();
+      }else{
+        ctx.fillStyle="#2f8f46";ctx.fillRect(o.x-20,y-32,40,64);
+        ctx.fillStyle="#f1c232";ctx.fillRect(o.x-20,y-6,40,16);
+        ctx.fillStyle="#1d1d1d";ctx.fillRect(o.x-18,y-26,36,12);
+        ctx.fillStyle="#fff";ctx.font="9px sans-serif";ctx.textAlign="center";ctx.fillText("CNG",o.x,y+6);
+      }
+    }
+    // rickshaw (top-down, front = up)
+    var px=fall?x+(fall.ox-x)*Math.min(1,fall.t*2.5):x,fs=fall?Math.max(.05,1-fall.t):1;
+    ctx.save();ctx.translate(px,PY);ctx.rotate(fall?fall.t*2.2:vx/900);ctx.scale(fs,fs);
+    ctx.fillStyle="#1b1b1b";ctx.fillRect(-20,14,6,26);ctx.fillRect(14,14,6,26);ctx.fillRect(-3,-42,6,16);
+    ctx.fillStyle="#d6452d";ctx.fillRect(-15,6,30,34);
+    ctx.fillStyle="#f1c232";ctx.fillRect(-15,14,30,5);ctx.fillRect(-15,26,30,5);
+    ctx.fillStyle="#3b5bdb";ctx.fillRect(-9,0,18,10);
+    ctx.fillStyle="#f0c8a0";ctx.beginPath();ctx.arc(0,-8,8,0,7);ctx.fill();
+    ctx.fillStyle="#222";ctx.beginPath();ctx.arc(0,-10,5,Math.PI,0);ctx.fill();
+    ctx.fillStyle="#2d6a4f";ctx.fillRect(-9,-4,18,8);
+    if(!fall){ctx.fillStyle="#7c3aed";ctx.fillRect(-7,14,14,10);ctx.fillStyle="#f0c8a0";ctx.beginPath();ctx.arc(0,12,6,0,7);ctx.fill();}
+    ctx.restore();
+    if(fall){
+      var ft=fall.t,pxx=px+ft*45,pyy=PY+10-Math.sin(Math.min(1,ft/.7)*Math.PI)*70+Math.max(0,ft-.7)*60,ps=Math.max(.1,1-Math.max(0,ft-.6)/.9);
+      ctx.save();ctx.translate(pxx,pyy);ctx.rotate(ft*5);ctx.scale(ps,ps);
+      ctx.fillStyle="#7c3aed";ctx.fillRect(-7,0,14,12);ctx.fillStyle="#f0c8a0";ctx.beginPath();ctx.arc(0,-4,7,0,7);ctx.fill();ctx.restore();
+      ctx.fillStyle="#fff";ctx.strokeStyle="#000";ctx.lineWidth=4;ctx.font="bold 26px sans-serif";ctx.textAlign="center";ctx.strokeText("Aaaaah!!",W/2,PY-90);ctx.fillText("Aaaaah!!",W/2,PY-90);
+    }
+    // stop banner
+    var p=dist/TRIP;
+    for(var s=0;s<STOPS.length;s++){
+      if(Math.abs(p-STOPS[s][1])<.035){
+        ctx.fillStyle="rgba(0,0,0,.6)";ctx.fillRect(40,50,W-80,34);
+        ctx.fillStyle="#fff";ctx.font="bold 16px sans-serif";ctx.textAlign="center";ctx.fillText("📍 "+STOPS[s][0],W/2,73);
+      }
+    }
+    if(inJam(dist)){ctx.fillStyle="rgba(214,69,69,.85)";ctx.fillRect(60,92,W-120,26);ctx.fillStyle="#fff";ctx.font="bold 14px sans-serif";ctx.textAlign="center";ctx.fillText("🚦 TRAFFIC JAM! Peep peep 📯",W/2,110)}
+    if(msgT>0){ctx.fillStyle="#fff";ctx.strokeStyle="#000";ctx.lineWidth=4;ctx.font="bold 22px sans-serif";ctx.textAlign="center";
+      ctx.strokeText(msg,W/2,PY-70);ctx.fillText(msg,W/2,PY-70)}
+    ctx.restore();
+  }
+  function ptr(e,down){
+    if(!down){touch=0;return}
+    var r=cv.getBoundingClientRect();touch=(e.clientX-r.left)<r.width/2?-1:1;
+  }
+  cv.addEventListener("pointerdown",function(e){e.preventDefault();ptr(e,true)});
+  cv.addEventListener("pointermove",function(e){if(touch)ptr(e,true)});
+  window.addEventListener("pointerup",function(e){ptr(e,false)});
+  window.addEventListener("keydown",function(e){keys[e.key]=true;if(e.key.indexOf("Arrow")===0)e.preventDefault()});
+  window.addEventListener("keyup",function(e){keys[e.key]=false});
+  document.getElementById("go").addEventListener("click",start);
+  function bind(id,k){var b=document.getElementById(id);b.addEventListener("pointerdown",function(e){e.preventDefault();hold[k]=true});["pointerup","pointerleave","pointercancel"].forEach(function(ev){b.addEventListener(ev,function(){hold[k]=false})})}
+  bind("bslow","slow");bind("brun","run");
+  dist=0;x=105;vx=0;obs=[];stripe=0;shake=0;msgT=0;draw();
+})();
+</script>
+</body>
+</html>
